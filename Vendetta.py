@@ -1,5 +1,7 @@
 import praw
 import time
+import json
+import os
 
 # --- Reddit login ---
 reddit = praw.Reddit("vendetta")
@@ -7,7 +9,7 @@ subreddit = reddit.subreddit("AskOuijaRedux")
 print(f"✅ Logged in as: {reddit.user.me()}")
 
 # --- Rate limiting ---
-ACTION_DELAY = 2
+ACTION_DELAY = 1.1
 last_action_time = 0
 
 def safe_action(func, *args, **kwargs):
@@ -36,16 +38,34 @@ def collect_letters(comment):
         current = current.parent()
     return letters[::-1]
 
+
 def is_goodbye(text: str) -> bool:
     """Check if text starts with 'goodbye' or 'good bye' (case-insensitive)"""
     lowered = text.lower()
     return lowered.startswith("goodbye") or lowered.startswith("good bye")
 
+
 # --- Blocked word lists ---
-nsfw_words = {"SEX", "PORN", "NSFW"}
-politics_words = {"TRUMP", "BIDEN", "POLITICS", "USSR", "HITLER"}
+def load_words(filename):
+    if not os.path.exists(filename):
+        print(f"⚠️ Missing {filename}, using empty list")
+        return set()
+    with open(filename, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return {w.upper() for w in data.get("words", [])}
+
+
+# Load blocked words from JSON files
+nsfw_words = load_words("nsfw.json")
+politics_words = load_words("politics.json")
+tos_words = load_words("tos.json")
 
 # --- Modmail responses ---
+tos_response = (
+    "Hello, unfortunately your comment was removed because it violates Rule 1. "
+    "Please review this rule as to not breach this in the future. "
+    "If you believe this was a mistake, contact the moderators by linking this comment."
+)
 nsfw_response = (
     "Hello, unfortunately your comment was removed because it violates Rule 8. "
     "Please review this rule as to not breach this in the future. "
@@ -75,15 +95,20 @@ for comment in subreddit.stream.comments(skip_existing=True):
         reason = ""
         message = ""
 
-        # Check NSFW first
+        # Check NSFW
         if ouija_word.upper() in nsfw_words:
             reason = "Rule 8: NSFW "
             message = nsfw_response
             action_taken = True
-        # Then check Politics
+        # Check Politics
         elif ouija_word.upper() in politics_words:
             reason = "Rule 9: Politics"
             message = politics_response
+            action_taken = True
+        # Check TOS Violations
+        elif ouija_word.upper() in tos_words:
+            reason = "Rule 1: TOS Broken"
+            message = tos_response
             action_taken = True
 
         if action_taken:
@@ -106,10 +131,9 @@ for comment in subreddit.stream.comments(skip_existing=True):
                     f"Reason: {reason}\n\n"
                     "This user has prior abuse or ban notes. Please review for potential banning."
                 )
-                for mod in subreddit.moderator():
-                    safe_action(reddit.redditor(mod.name).message,
-                                subject=escalation_subject,
-                                message=escalation_message)
+                safe_action(subreddit.message,
+                    subject=escalation_subject,
+                    message=escalation_message)
                 print(f"⚠️ User {comment.author} has prior notes — escalated to moderators for possible ban.")
 
             # Remove the Goodbye comment
@@ -121,13 +145,16 @@ for comment in subreddit.stream.comments(skip_existing=True):
             if isinstance(parent, praw.models.Comment):
                 safe_action(parent.mod.lock)
                 print(f"🔒 Locked parent comment: {parent.id}")
-
             # Add mod note
-            safe_action(subreddit.mod.notes.create,
-                        label="ABUSE_WARNING",
-                        note=f"Ouija answer removed for {reason}: {ouija_word}",
-                        redditor=comment.author.name)
-            print(f"📝 Added mod note: Abuse Warning")
+            try:
+                subreddit.mod.notes.create(
+                    label="ABUSE_WARNING",
+                    user=comment.author,
+                    note=f"{reason}: {ouija_word}"
+                )
+                print("📝 Added mod note: Abuse Warning")
+            except Exception as e:
+                print(f"⚠️ API action failed when adding mod note: {e}")
 
             # Modmail the user who posted the goodbye (skip moderators)
             if comment.author not in subreddit.moderator():
@@ -140,12 +167,15 @@ for comment in subreddit.stream.comments(skip_existing=True):
 
             # Modmail all moderators with a link to the removed comment
             mod_link = f"https://www.reddit.com{comment.permalink}"
-            mod_subject = f"Removed Ouija answer: {ouija_word}"
-            mod_message = f"The following comment was removed:\n\n{mod_link}\n\nReason: {reason}"
-            for mod in subreddit.moderator():
-                safe_action(reddit.redditor(mod.name).message,
-                            subject=mod_subject,
-                            message=mod_message)
+            mod_subject = f"Goodbye removed: {ouija_word}"
+            mod_message = f"The following goodbye was removed:\n\n{mod_link}\n\nReason: {reason}. " \
+                          f"Please remove the necessary contributions"
+
+            safe_action(subreddit.message,
+                        subject=mod_subject,
+                        message=mod_message)
+            print("📬 Sent modmail to moderators")
             print(f"📬 Modmailed all moderators about the removal")
         else:
+            safe_action(comment.mod.approve)
             print(f"✅ Allowed answer: {ouija_word} (no action taken)")
