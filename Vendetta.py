@@ -79,6 +79,7 @@ politics_response = (
 try:
     # --- Stream comments ---
     for comment in subreddit.stream.comments(skip_existing=True):
+        submission = comment.submission
         text = comment.body.strip()
         print(f"{comment.author}: {text}")
 
