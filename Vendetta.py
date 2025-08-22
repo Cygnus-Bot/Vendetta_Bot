@@ -1,7 +1,4 @@
-import praw
-import time
-import json
-import os
+import praw, time, json, os, removalmanager
 
 # --- Reddit login ---
 reddit = praw.Reddit("vendetta")
@@ -60,22 +57,6 @@ nsfw_words = load_words("nsfw.json")
 politics_words = load_words("politics.json")
 tos_words = load_words("tos.json")
 
-# --- Modmail responses ---
-tos_response = (
-    "Hello, unfortunately your comment was removed because it violates Rule 1. "
-    "Please review this rule as to not breach this in the future. "
-    "If you believe this was a mistake, contact the moderators by linking this comment."
-)
-nsfw_response = (
-    "Hello, unfortunately your comment was removed because it violates Rule 8. "
-    "Please review this rule as to not breach this in the future. "
-    "If you believe this was a mistake, contact the moderators by linking this comment."
-)
-politics_response = (
-    "Hello, unfortunately your comment was removed because it violates Rule 9. "
-    "Please review this rule as to not breach this in the future. "
-    "If you believe this was a mistake, contact the moderators by linking this comment."
-)
 try:
     # --- Stream comments ---
     for comment in subreddit.stream.comments(skip_existing=True):
@@ -98,81 +79,21 @@ try:
 
             # Check NSFW
             if ouija_word.upper() in nsfw_words:
-                reason = "Rule 8: NSFW "
-                message = "Hello, unfortunately your comment was removed because it violates Rule 8.\n " \
-                          "Please review this rule as to not breach this in the future. " \
-                          "If you believe this was a mistake, contact the moderators by linking this comment."
+                reason = "rule8"
                 action_taken = True
 
             # Check Politics
             elif ouija_word.upper() in politics_words:
-                reason = "Rule 9: Politics"
-                message = "Hello, unfortunately your comment was removed because it violates Rule 9.\n " \
-                          "Please review this rule as to not breach this in the future. " \
-                          "If you believe this was a mistake, contact the moderators by linking this comment."
+                reason = "rule9"
                 action_taken = True
 
             # Check TOS Violations
             elif ouija_word.upper() in tos_words:
-                reason = "Rule 1: TOS Broken"
-                message = "Hello, unfortunately your comment was removed because you cannot violate the Reddit TOS," \
-                          " as stated in Rule 1.\n " \
-                          "Please review this rule as to not breach this in the future. " \
-                          "If you believe this was a mistake, contact the moderators by linking this comment."
+                reason = "rule1"
                 action_taken = True
 
             if action_taken:
-                safe_action(comment.mod.remove)
-
-                # Step 2: Send a private DM to the user instead of send_removal_message()
-                try:
-                    reddit.redditor(str(comment.author)).message(
-                        subject="Your comment was removed",
-                        message=message
-                    )
-                    print(f"📩 Sent removal message to {comment.author}")
-                except Exception as e:
-                    print(f"⚠️ Failed to send removal message to {comment.author}: {e}")
-
-                # Step 3: Check for prior abuse or ban notes before modmail
-                try:
-                    print(f"📝 Checking for prior mod notes for {comment.author}")
-                    prior_abuse_or_ban = False
-                    already_noted = False
-
-                    redditor = reddit.redditor(str(comment.author))
-                    notes = redditor.notes(subreddit=subreddit)
-
-                    for note in notes:
-                        if note.label in {"ABUSE_WARNING", "BAN", "PERMA_BAN", "BOT_BAN"}:
-                            prior_abuse_or_ban = True
-                        # Check if this submission is already noted
-                        if note.operator == "bot" and submission.id in (note.note or ""):
-                            already_noted = True
-
-                    # Add a note if this submission hasn't been recorded yet
-                    if not already_noted:
-                        redditor.notes.add(
-                            subreddit=subreddit,
-                            label="ABUSE_WARNING",
-                            note=f"Removed comment in thread {submission.id} (Rule 8: NSFW)"
-                        )
-                        print(f"📝 Added mod note for {comment.author} in thread {submission.id}")
-                    else:
-                        print(f"ℹ️ Skipped adding duplicate note for {comment.author} in {submission.id}")
-
-                    # Only send modmail if prior serious notes exist
-                    if prior_abuse_or_ban:
-                        subreddit.message(
-                            subject="Repeat offender alert",
-                            message=f"User {comment.author} had a comment removed.\n\n"
-                                    f"Reason: {reason}\n\n"
-                                    "They already have a prior abuse or ban note."
-                        )
-                        print(f"📬 Modmailed moderators about repeat offender {comment.author}")
-
-                except Exception as e:
-                    print(f"⚠️ Could not fetch/add mod notes for {comment.author}: {e}")
+                removalmanager.removeContent(comment, reason)
 
                 # --- Determine how many letter comments to remove ---
                 letters_to_remove = 0
@@ -197,52 +118,8 @@ try:
 
                 # Remove last N letters
                 for bad_letter_comment in parent_comments[-letters_to_remove:]:
-                    safe_action(bad_letter_comment.mod.remove)
+                    removalmanager.removeContent(bad_letter_comment, reason)
                     print(f"🚫 Removed letter comment: {bad_letter_comment.body} ({reason})")
-
-                    # Add mod note for the letter
-                    try:
-                        subreddit.mod.notes.create(
-                            label="ABUSE_WARNING",
-                            user=bad_letter_comment.author,
-                            note=f"Letter contributing to forbidden word {ouija_word}"
-                        )
-                        print("📝 Added mod note for letter")
-                    except Exception as e:
-                        print(f"⚠️ Failed to add mod note for letter: {e}")
-
-                    # Modmail moderators about the removed letter
-                    mod_link = f"https://www.reddit.com{bad_letter_comment.permalink}"
-                    safe_action(subreddit.message,
-                                subject=f"Removed letter contributing to {ouija_word}",
-                                message=f"Letter comment removed:\n\n{mod_link}\n\nReason: {reason}")
-                    print("📬 Modmailed moderators about letter removal")
-
-                # Finally, remove the Goodbye comment itself
-                safe_action(comment.mod.remove)
-                print(f"🚫 Removed forbidden Goodbye: {ouija_word} ({reason})")
-
-                # Add mod note for the Goodbye
-                try:
-                    reddit.notes.create(
-                        subreddit=subreddit,
-                        redditor=comment.author,
-                        label="ABUSE_WARNING",
-                        note=f"{reason}: {ouija_word}"
-                    )
-                    print("📝 Added mod note: Abuse Warning")
-                except Exception as e:
-                    print(f"⚠️ API action failed when adding mod note: {e}")
-
-                # Modmail the user who posted the Goodbye (skip moderators)
-                if comment.author not in subreddit.moderator():
-                    safe_action(reddit.redditor(comment.author.name).message,
-                                subject="Your Ouija answer was removed",
-                                message=message)
-                    print(f"📬 Modmailed user {comment.author}")
-                else:
-                    print(f"ℹ️ Skipped modmail because {comment.author} is a moderator")
-                print(f"🚨Moderation on thread completed.")
             else:
                 safe_action(comment.mod.approve)
                 print(f"✅ Allowed answer: {ouija_word} (no action taken)")
@@ -253,4 +130,3 @@ except Exception as e:
         subject="Vendetta_Bot crashed",
         message=error_message
     )
-    raise
