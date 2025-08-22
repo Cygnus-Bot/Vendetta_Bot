@@ -130,3 +130,4 @@ except Exception as e:
         subject="Vendetta_Bot crashed",
         message=error_message
     )
+    

@@ -20,7 +20,7 @@ def removeContent(item, ruleName):
                 label=str(ruleAction), note=f"{ruleName} Violation.", subreddit=sub
             )
         except (TypeError, AttributeError):
-            pass
+            print("User Delted Comment")
         
         warnings = 0
         for note in sub.mod.notes.redditors(item.author, limit=999):
@@ -35,7 +35,7 @@ def removeContent(item, ruleName):
 
 
     except praw.exceptions.RedditAPIException:
-        pass
+        print("User Deleted Comment")
     
 
 if __name__ == "__main__":

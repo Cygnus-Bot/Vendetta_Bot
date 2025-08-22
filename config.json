@@ -12,5 +12,10 @@
     "rule9": {
         "modActions": "ABUSE_WARNING",
         "removalReason": "3c10d6ba-96db-4105-979b-d545f0a23fde"
+    },
+    
+    "spam": {
+        "modActions": "ABUSE_WARNING",
+        "removalReason": "spam"
     }
 }
